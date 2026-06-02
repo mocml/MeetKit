@@ -29,18 +29,23 @@ export async function GET(request: NextRequest) {
     if (typeof roomName !== 'string') {
       return new NextResponse('Missing required query parameter: roomName', { status: 400 });
     }
-    if (participantName === null) {
-      return new NextResponse('Missing required query parameter: participantName', { status: 400 });
-    }
 
-    // Generate participant token
+    // Sinh hậu tố ngẫu nhiên cho người tham gia
     if (!randomParticipantPostfix) {
       randomParticipantPostfix = randomString(4);
     }
+
+    // Xác định tên hiển thị, nếu rỗng hoặc null thì gán tên Guest kèm ID ngẫu nhiên
+    let displayName = participantName;
+    if (!displayName || displayName === 'null' || displayName === 'undefined' || displayName.trim() === '') {
+      displayName = `Guest ${randomParticipantPostfix}`;
+    }
+
+    // Generate participant token
     const participantToken = await createParticipantToken(
       {
-        identity: `${participantName}__${randomParticipantPostfix}`,
-        name: participantName,
+        identity: `${displayName}__${randomParticipantPostfix}`,
+        name: displayName,
         metadata,
       },
       roomName,
@@ -51,7 +56,7 @@ export async function GET(request: NextRequest) {
       serverUrl: livekitServerUrl,
       roomName: roomName,
       participantToken: participantToken,
-      participantName: participantName,
+      participantName: displayName,
     };
     return new NextResponse(JSON.stringify(data), {
       headers: {

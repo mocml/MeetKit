@@ -7,10 +7,12 @@ import {
   useCreateLayoutContext,
   TrackReferenceOrPlaceholder,
   GridLayout,
-  useLayoutContext
+  useLayoutContext,
+  useParticipants
 } from '@livekit/components-react';
 import { RoomEvent, Track } from 'livekit-client';
 import ParticipantGridTile from '../../components/ParticipantGridTile';
+import { Whiteboard } from '../../components/Whiteboard';
 
 function VideoPanelContent() {
   const layoutContext = useLayoutContext();
@@ -28,7 +30,10 @@ function VideoPanelContent() {
       onlySubscribed: false
     }
   );
-
+  const participants = useParticipants();
+  const isWhiteboardOpen = participants.some(
+    (p) => p.attributes?.isWhiteboardActive === 'true'
+  );
   // Quản lý và đồng bộ trạng thái ghim (Pin State)
   const prevScreenShareTracksRef = React.useRef<TrackReferenceOrPlaceholder[]>([]);
   React.useEffect(() => {
@@ -121,6 +126,22 @@ function VideoPanelContent() {
               <div className="w-8 h-8 rounded-full border border-emerald-500 border-t-transparent animate-spin" />
             </div>
             <p className="text-xs text-zinc-500 font-medium">Waiting for video feeds...</p>
+          </div>
+        ) : isWhiteboardOpen ? (
+          <div className="flex w-full h-full p-4 gap-4 overflow-hidden">
+            {/* Left Sidebar: Camera feeds stack during whiteboard session */}
+            <div className="w-54 shrink-0 flex flex-col gap-3 overflow-y-auto pr-1 scrollbar-thin scrollbar-thumb-zinc-800 scrollbar-track-transparent">
+              {[...screenShareTracks, ...cameraTracks].map((track) => (
+                <div key={track.publication?.trackSid || track.participant.identity} className="w-full aspect-video shrink-0">
+                  <ParticipantGridTile trackRef={track} />
+                </div>
+              ))}
+            </div>
+
+            {/* Main Area: Collaborative Whiteboard */}
+            <div className="flex-1 h-full relative rounded-2xl overflow-hidden border border-zinc-800/80 shadow-2xl bg-[#0f0f12]">
+              <Whiteboard />
+            </div>
           </div>
         ) : hasFocus ? (
           <div className="flex w-full h-full p-4 gap-4 overflow-hidden">

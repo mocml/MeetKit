@@ -58,6 +58,23 @@ export function MainLayout({ children }: MainLayoutProps) {
     setUnreadCount(count);
   }, [liveMessages, isChatOpen]);
 
+  // Trạng thái bảng trắng cộng tác dựa trên thuộc tính của các thành viên trong phòng
+  const isWhiteboardOpen = participants.some(
+    (p) => p.attributes?.isWhiteboardActive === 'true'
+  );
+
+  const toggleWhiteboard = async () => {
+    if (!room?.localParticipant) return;
+    const isCurrentlyActive = room.localParticipant.attributes?.isWhiteboardActive === 'true';
+    try {
+      await room.localParticipant.setAttributes({
+        isWhiteboardActive: String(!isCurrentlyActive)
+      });
+    } catch (err) {
+      console.error("Failed to toggle whiteboard:", err);
+    }
+  };
+
   // 1. Tự động đồng bộ và force re-render khi bất kỳ thành viên nào thay đổi attributes (giơ/hạ tay)
   useEffect(() => {
     if (!room) return;
@@ -263,6 +280,19 @@ export function MainLayout({ children }: MainLayoutProps) {
               {unreadCount > 0 && (
                 <div className="absolute top-1 right-2.5 w-2 h-2 bg-emerald-500 rounded-full shadow-[0_0_8px_rgba(16,185,129,0.8)] animate-pulse" />
               )}
+            </button>
+
+            {/* Whiteboard Toggle Button */}
+            <button
+              onClick={toggleWhiteboard}
+              className={`flex flex-col items-center justify-center w-12 h-11 rounded-lg transition-all cursor-pointer ${
+                isWhiteboardOpen
+                  ? 'bg-zinc-800/80 text-emerald-400 border-b-2 border-emerald-500 rounded-b-none'
+                  : 'text-zinc-400 hover:bg-zinc-800/50 hover:text-zinc-200'
+              }`}
+            >
+              <FileText className="w-4.5 h-4.5" />
+              <span className="text-[9px] mt-0.5 font-semibold">Board</span>
             </button>
 
             {/* People Toggle Button */}
