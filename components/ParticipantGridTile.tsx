@@ -13,7 +13,8 @@ import {
   FocusToggle,
   isTrackReference,
   TrackReferenceOrPlaceholder,
-  useSpeakingParticipants
+  useSpeakingParticipants,
+  useTracks
 } from '@livekit/components-react';
 import { Track } from 'livekit-client';
 import { Monitor, Hand, Pin } from 'lucide-react';
@@ -42,7 +43,23 @@ export function ParticipantGridTile({ trackRef }: ParticipantGridTileProps) {
   );
 
   const participants = useParticipants();
-  const showPinButton = participants.length > 1;
+
+  // Kiểm tra xem bảng trắng chung có đang được bật hay không
+  const isWhiteboardOpen = participants.some(
+    (p) => p.attributes?.isWhiteboardActive === 'true'
+  );
+
+  // Lấy các track camera và share screen thực tế đang hoạt động (không bao gồm placeholder tắt cam)
+  const activeVideoTracks = useTracks([
+    { source: Track.Source.Camera, withPlaceholder: false },
+    { source: Track.Source.ScreenShare, withPlaceholder: false }
+  ]);
+
+  // Hiển thị nút Pin khi:
+  // 1. Có từ 2 người tham gia trở lên
+  // 2. Có từ 2 luồng video camera/screen share thực tế đang phát
+  // 3. Hoặc khi bảng trắng đang mở (vì bảng trắng đóng vai trò như 1 track hiển thị chiếm dụng không gian)
+  const showPinButton = participants.length > 1 || activeVideoTracks.length >= 2 || isWhiteboardOpen;
 
   const speakingParticipants = useSpeakingParticipants();
   const isSpeaking = speakingParticipants.some(
@@ -51,11 +68,10 @@ export function ParticipantGridTile({ trackRef }: ParticipantGridTileProps) {
 
   return (
     <div
-      className={`group relative flex items-center justify-center w-full h-full bg-[#0f0f12] rounded-2xl overflow-hidden transition-all duration-300 shadow-xl border-2 ${
-        isSpeaking
+      className={`group relative flex items-center justify-center w-full h-full bg-[#0f0f12] rounded-2xl overflow-hidden transition-all duration-300 shadow-xl border-2 ${isSpeaking
           ? 'border-emerald-500 shadow-[0_0_15px_rgba(16,185,129,0.35)] z-10'
           : 'border-transparent'
-      }`}
+        }`}
     >
       {isTrackReference(resolvedTrackRef) && !isMuted ? (
         <>
@@ -105,11 +121,10 @@ export function ParticipantGridTile({ trackRef }: ParticipantGridTileProps) {
         {showPinButton && (
           <FocusToggle
             trackRef={resolvedTrackRef}
-            className={`my-custom-pin-button flex items-center justify-center w-8 h-8 rounded-full transition-all duration-200 border border-zinc-800/80 backdrop-blur-md cursor-pointer ${
-              isPinned
+            className={`my-custom-pin-button flex items-center justify-center w-8 h-8 rounded-full transition-all duration-200 border border-zinc-800/80 backdrop-blur-md cursor-pointer ${isPinned
                 ? 'bg-emerald-500 text-zinc-950 border-emerald-400 hover:bg-emerald-600 shadow-[0_0_12px_rgba(16,185,129,0.4)] opacity-100 visible'
                 : 'bg-zinc-950/70 text-zinc-300 hover:text-white hover:bg-zinc-900/90 opacity-0 invisible group-hover:opacity-100 group-hover:visible'
-            }`}
+              }`}
           >
             <Pin className={`w-3.5 h-3.5 ${isPinned ? 'fill-zinc-950' : ''}`} />
           </FocusToggle>

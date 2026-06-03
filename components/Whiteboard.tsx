@@ -3,9 +3,11 @@
 import React, { useEffect, useRef, useState, useCallback } from 'react';
 import { useRoomContext } from '@livekit/components-react';
 import { RoomEvent } from 'livekit-client';
-import { Palette, Trash2, Eraser, Edit3, Circle } from 'lucide-react';
+import { Palette, Trash2, Eraser, Edit3, Circle, Undo } from 'lucide-react';
 
 interface Stroke {
+  id: string; // ID duy nhất cho toàn bộ nét vẽ dài từ lúc click đến lúc nhả chuột
+  sender: string; // Tên định danh của người vẽ
   prevX: number;
   prevY: number;
   currX: number;
@@ -25,9 +27,12 @@ export function Whiteboard() {
   const [isEraser, setIsEraser] = useState(false);
   const isDrawingRef = useRef(false);
   const lastPointRef = useRef<{ x: number; y: number } | null>(null);
-
   // Stroke history for redrawing on resize
   const strokesRef = useRef<Stroke[]>([]);
+  const currentStrokeIdRef = useRef<string | null>(null);
+  
+  // Danh sách tối đa 20 Stroke ID gần nhất của chính mình để giới hạn số lần được phép hoàn tác
+  const myStrokeIdsRef = useRef<string[]>([]);
 
   // List of premium HSL tailored colors
   const colors = [
@@ -107,10 +112,9 @@ export function Whiteboard() {
         currentPath.push(stroke);
       } else {
         const last = currentPath[currentPath.length - 1];
-        // Kiểm tra nét vẽ có nối tiếp và có cùng màu sắc/kích thước không
+        // Kiểm tra nét vẽ có nối tiếp và thuộc cùng một Stroke ID vẽ liền mạch hay không
         const isContiguous =
-          Math.abs(stroke.prevX - last.currX) < 0.0001 &&
-          Math.abs(stroke.prevY - last.currY) < 0.0001 &&
+          last.id === stroke.id &&
           stroke.color === last.color &&
           stroke.size === last.size;
 
@@ -133,7 +137,7 @@ export function Whiteboard() {
     if (!canvas || !container) return;
 
     const rect = container.getBoundingClientRect();
-    const dpr = window.devicePixelRatio || 1;
+    const dpr = window.devicePixelRatio || 2;
 
     // Sử dụng kích thước CSS tròn số để loại bỏ hoàn toàn hiện tượng lệch sub-pixel
     const width = Math.round(rect.width);
@@ -190,6 +194,8 @@ export function Whiteboard() {
 
         if (data.type === 'whiteboard_draw') {
           const stroke: Stroke = {
+            id: data.id,
+            sender: data.sender,
             prevX: data.prevX,
             prevY: data.prevY,
             currX: data.currX,
@@ -211,8 +217,13 @@ export function Whiteboard() {
               drawStroke(ctx, stroke, Math.round(rect.width), Math.round(rect.height));
             }
           }
+        } else if (data.type === 'whiteboard_undo') {
+          const undoId = data.strokeId;
+          strokesRef.current = strokesRef.current.filter((s) => s.id !== undoId);
+          redraw();
         } else if (data.type === 'whiteboard_clear') {
           strokesRef.current = [];
+          myStrokeIdsRef.current = []; // Xóa hàng đợi undo của mình khi bảng vẽ bị xóa sạch
           const canvas = canvasRef.current;
           const container = containerRef.current;
           if (canvas && container) {
@@ -232,7 +243,7 @@ export function Whiteboard() {
     return () => {
       room.off(RoomEvent.DataReceived, handleDataReceived);
     };
-  }, [room]);
+  }, [room, redraw]);
 
   // Publish draw stroke to all participants reliably to avoid broken lines
   const broadcastDraw = (stroke: Stroke) => {
@@ -276,10 +287,20 @@ export function Whiteboard() {
       x: x / rect.width,
       y: y / rect.height
     };
+    
+    // Sinh mã Stroke ID ngẫu nhiên duy nhất cho toàn bộ nét bút từ lúc click đến lúc nhả chuột
+    const strokeId = Math.random().toString(36).substring(2, 9);
+    currentStrokeIdRef.current = strokeId;
+    
+    // Lưu vào hàng đợi để hỗ trợ hoàn tác giới hạn tối đa 20 nét vẽ gần nhất
+    myStrokeIdsRef.current.push(strokeId);
+    if (myStrokeIdsRef.current.length > 20) {
+      myStrokeIdsRef.current.shift(); // Loại bỏ nét vẽ cũ nhất ra khỏi giới hạn hoàn tác
+    }
   };
 
   const draw = (clientX: number, clientY: number) => {
-    if (!isDrawingRef.current || !lastPointRef.current) return;
+    if (!isDrawingRef.current || !lastPointRef.current || !room || !currentStrokeIdRef.current) return;
     const canvas = canvasRef.current;
     const container = containerRef.current;
     if (!canvas || !container) return;
@@ -296,6 +317,8 @@ export function Whiteboard() {
     };
 
     const stroke: Stroke = {
+      id: currentStrokeIdRef.current,
+      sender: room.localParticipant.identity,
       prevX: lastPointRef.current.x,
       prevY: lastPointRef.current.y,
       currX: currentPoint.x,
@@ -319,10 +342,37 @@ export function Whiteboard() {
   const stopDrawing = () => {
     isDrawingRef.current = false;
     lastPointRef.current = null;
+    currentStrokeIdRef.current = null;
+  };
+
+  const handleUndo = () => {
+    if (!room || myStrokeIdsRef.current.length === 0) return;
+
+    // Lấy nét vẽ gần nhất trong danh sách 20 nét vẽ của mình
+    const targetStrokeId = myStrokeIdsRef.current.pop();
+
+    if (targetStrokeId) {
+      // Xóa tất cả các điểm thuộc về Stroke ID đó khỏi lịch sử cục bộ
+      strokesRef.current = strokesRef.current.filter((s) => s.id !== targetStrokeId);
+      // Vẽ lại bảng vẽ cục bộ
+      redraw();
+
+      // Phát đi thông điệp yêu cầu phòng họp undo Stroke ID tương ứng
+      const payload = JSON.stringify({
+        type: 'whiteboard_undo',
+        strokeId: targetStrokeId
+      });
+      const data = new TextEncoder().encode(payload);
+      room.localParticipant.publishData(data, {
+        reliable: true,
+        topic: 'whiteboard'
+      }).catch(console.error);
+    }
   };
 
   const clearCanvas = () => {
     strokesRef.current = [];
+    myStrokeIdsRef.current = []; // Reset danh sách undo
     const canvas = canvasRef.current;
     const container = containerRef.current;
     if (canvas && container) {
@@ -334,6 +384,9 @@ export function Whiteboard() {
     }
     broadcastClear();
   };
+
+  // State to control toolbar expansion
+  const [isExpanded, setIsExpanded] = useState(false);
 
   return (
     <div className="w-full h-full flex flex-col relative bg-white overflow-hidden select-none">
@@ -366,77 +419,119 @@ export function Whiteboard() {
         />
       </div>
 
-      {/* Floating interactive whiteboard toolbar */}
-      <div className="absolute bottom-5 left-1/2 -translate-x-1/2 flex items-center gap-4 bg-zinc-900/80 backdrop-blur-xl border border-zinc-800/80 px-4 py-2.5 rounded-2xl shadow-[0_10px_30px_rgba(0,0,0,0.5)] z-50">
+      {/* Floating interactive whiteboard toolbar (Bottom-left corner, horizontal expansion) */}
+      <div
+        onMouseEnter={() => setIsExpanded(true)}
+        onMouseLeave={() => setIsExpanded(false)}
+        onClick={() => !isExpanded && setIsExpanded(true)}
+        className={`absolute bottom-5 left-5 flex items-center gap-4 bg-zinc-800/85 backdrop-blur-xl shadow-[0_12px_40px_rgba(0,0,0,0.6)] z-50 transition-all duration-350 ease-in-out cursor-pointer ${isExpanded
+          ? 'px-4 py-2.5 rounded-2xl w-auto max-w-150 h-12 opacity-100'
+          : 'w-12 h-12 rounded-2xl justify-center p-0 opacity-80 hover:opacity-100 hover:scale-105 active:scale-95'
+          }`}
+      >
+        {!isExpanded ? (
+          <div className="flex items-center justify-center text-emerald-400 w-full h-full" title="Open Toolbar">
+            <Palette className="w-5 h-5" />
+          </div>
+        ) : (
+          <div className="flex items-center gap-4 animate-in fade-in zoom-in-95 duration-250 w-full h-full">
+            {/* Toggle Mode: Pen vs Eraser */}
+            <div className="flex bg-zinc-950/60 p-0.5 rounded-lg border border-zinc-800/50 gap-0.5 items-center">
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setIsEraser(false);
+                }}
+                className={`p-1.5 rounded-md cursor-pointer transition-colors flex justify-center ${!isEraser ? 'bg-emerald-500 text-zinc-950 shadow-md font-bold' : 'text-zinc-400 hover:text-zinc-200'}`}
+                title="Pen Tool"
+              >
+                <Edit3 className="w-4 h-4" />
+              </button>
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setIsEraser(true);
+                }}
+                className={`p-1.5 rounded-md cursor-pointer transition-colors flex justify-center ${isEraser ? 'bg-emerald-500 text-zinc-950 shadow-md font-bold' : 'text-zinc-400 hover:text-zinc-200'}`}
+                title="Eraser Tool"
+              >
+                <Eraser className="w-4 h-4" />
+              </button>
+            </div>
 
-        {/* Toggle Mode: Pen vs Eraser */}
-        <div className="flex bg-zinc-950/60 p-0.5 rounded-lg border border-zinc-800/50">
-          <button
-            onClick={() => setIsEraser(false)}
-            className={`p-1.5 rounded-md cursor-pointer transition-colors ${!isEraser ? 'bg-emerald-500 text-zinc-950 shadow-md font-bold' : 'text-zinc-400 hover:text-zinc-200'}`}
-            title="Pen Tool"
-          >
-            <Edit3 className="w-4 h-4" />
-          </button>
-          <button
-            onClick={() => setIsEraser(true)}
-            className={`p-1.5 rounded-md cursor-pointer transition-colors ${isEraser ? 'bg-emerald-500 text-zinc-950 shadow-md font-bold' : 'text-zinc-400 hover:text-zinc-200'}`}
-            title="Eraser Tool"
-          >
-            <Eraser className="w-4 h-4" />
-          </button>
-        </div>
+            {/* Color Palette (disabled in Eraser mode) */}
+            <div className={`flex items-center gap-1.5 ${isEraser ? 'opacity-30 pointer-events-none' : ''}`}>
+              {colors.map((c) => (
+                <button
+                  key={c.hex}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setColor(c.hex);
+                  }}
+                  className="w-5.5 h-5.5 rounded-full cursor-pointer border border-zinc-800 flex items-center justify-center transition-transform hover:scale-115 active:scale-95"
+                  style={{ backgroundColor: c.hex }}
+                  title={c.name}
+                >
+                  {color === c.hex && (
+                    <div className="w-1.5 h-1.5 rounded-full bg-zinc-950 shadow-sm" />
+                  )}
+                </button>
+              ))}
+            </div>
 
-        {/* Color Palette (disabled in Eraser mode) */}
-        <div className={`flex items-center gap-1.5 ${isEraser ? 'opacity-30 pointer-events-none' : ''}`}>
-          {colors.map((c) => (
+            <div className="w-px h-6 bg-zinc-800" />
+
+            {/* Size Selection */}
+            <div className="flex items-center gap-2">
+              {[
+                { size: 3, label: 'Small' },
+                { size: 6, label: 'Medium' },
+                { size: 12, label: 'Large' }
+              ].map((s) => (
+                <button
+                  key={s.size}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setSize(s.size);
+                  }}
+                  className={`p-1 rounded-md cursor-pointer text-zinc-400 hover:text-zinc-200 transition-colors flex items-center justify-center ${size === s.size ? 'bg-zinc-800 text-emerald-400 font-bold border border-zinc-750' : ''}`}
+                  title={`${s.label} Brush`}
+                >
+                  <Circle
+                    className="fill-current text-current animate-in zoom-in-50"
+                    style={{ width: `${6 + s.size / 2}px`, height: `${6 + s.size / 2}px` }}
+                  />
+                </button>
+              ))}
+            </div>
+
+            <div className="w-px h-6 bg-zinc-800" />
+
+            {/* Action: Undo */}
             <button
-              key={c.hex}
-              onClick={() => setColor(c.hex)}
-              className="w-5.5 h-5.5 rounded-full cursor-pointer border border-zinc-800 flex items-center justify-center transition-transform hover:scale-115 active:scale-95"
-              style={{ backgroundColor: c.hex }}
-              title={c.name}
+              onClick={(e) => {
+                e.stopPropagation();
+                handleUndo();
+              }}
+              className="p-1.5 rounded-lg text-emerald-400 hover:text-emerald-300 hover:bg-emerald-500/10 cursor-pointer transition-colors border border-transparent hover:border-emerald-500/20 flex justify-center items-center"
+              title="Undo last stroke"
             >
-              {color === c.hex && (
-                <div className="w-1.5 h-1.5 rounded-full bg-zinc-950 shadow-sm" />
-              )}
+              <Undo className="w-4 h-4" />
             </button>
-          ))}
-        </div>
 
-        <div className="w-px h-6 bg-zinc-800" />
-
-        {/* Size Selection */}
-        <div className="flex items-center gap-2">
-          {[
-            { size: 3, label: 'Small' },
-            { size: 6, label: 'Medium' },
-            { size: 12, label: 'Large' }
-          ].map((s) => (
+            {/* Action: Clear */}
             <button
-              key={s.size}
-              onClick={() => setSize(s.size)}
-              className={`p-1 rounded-md cursor-pointer text-zinc-400 hover:text-zinc-200 transition-colors flex items-center justify-center ${size === s.size ? 'bg-zinc-800 text-emerald-400 font-bold border border-zinc-750' : ''}`}
-              title={`${s.label} Brush`}
+              onClick={(e) => {
+                e.stopPropagation();
+                clearCanvas();
+              }}
+              className="p-1.5 rounded-lg text-rose-400 hover:text-rose-300 hover:bg-rose-500/10 cursor-pointer transition-colors border border-transparent hover:border-rose-500/20 flex justify-center items-center"
+              title="Clear Board"
             >
-              <Circle
-                className="fill-current text-current"
-                style={{ width: `${6 + s.size / 2}px`, height: `${6 + s.size / 2}px` }}
-              />
+              <Trash2 className="w-4 h-4" />
             </button>
-          ))}
-        </div>
-
-        <div className="w-px h-6 bg-zinc-800" />
-
-        {/* Action: Clear */}
-        <button
-          onClick={clearCanvas}
-          className="p-1.5 rounded-lg text-rose-400 hover:text-rose-300 hover:bg-rose-500/10 cursor-pointer transition-colors border border-transparent hover:border-rose-500/20"
-          title="Clear Board"
-        >
-          <Trash2 className="w-4 h-4" />
-        </button>
+          </div>
+        )}
       </div>
     </div>
   );

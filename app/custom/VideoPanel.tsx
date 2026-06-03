@@ -13,6 +13,7 @@ import {
 import { RoomEvent, Track } from 'livekit-client';
 import ParticipantGridTile from '../../components/ParticipantGridTile';
 import { Whiteboard } from '../../components/Whiteboard';
+import { Palette, Pin } from 'lucide-react';
 
 function VideoPanelContent() {
   const layoutContext = useLayoutContext();
@@ -34,6 +35,19 @@ function VideoPanelContent() {
   const isWhiteboardOpen = participants.some(
     (p) => p.attributes?.isWhiteboardActive === 'true'
   );
+
+  // Trạng thái ghim bảng trắng cục bộ
+  const [isWhiteboardPinned, setIsWhiteboardPinned] = React.useState(true);
+
+  // Đồng bộ bật ghim bảng trắng khi nó bắt đầu được mở lên lần đầu
+  const prevIsWhiteboardOpenRef = React.useRef(false);
+  React.useEffect(() => {
+    if (isWhiteboardOpen && !prevIsWhiteboardOpenRef.current) {
+      setIsWhiteboardPinned(true);
+    }
+    prevIsWhiteboardOpenRef.current = isWhiteboardOpen;
+  }, [isWhiteboardOpen]);
+
   // Quản lý và đồng bộ trạng thái ghim (Pin State)
   const prevScreenShareTracksRef = React.useRef<TrackReferenceOrPlaceholder[]>([]);
   React.useEffect(() => {
@@ -86,36 +100,73 @@ function VideoPanelContent() {
   });
   const hasPinnedTrack = pinnedTracks.length > 0;
 
-  // Thuật toán xác định đối tượng hiển thị ở khung chính (focusTrack):
-  // Ưu tiên ghim thủ công mới nhất nếu có bất kỳ ghim nào (camera hoặc screen share)
-  // Nếu không có ghim thủ công, mặc định ưu tiên màn hình chia sẻ mới nhất nếu có.
-  let focusTrack: TrackReferenceOrPlaceholder | undefined = undefined;
+  // 3. Tự động tương tác hai chiều giữa Ghim Bảng Trắng và Ghim Video Track khác
+  React.useEffect(() => {
+    if (hasPinnedTrack && isWhiteboardPinned) {
+      setIsWhiteboardPinned(false); // Nhường chỗ cho video track được ghim thủ công
+    }
+  }, [hasPinnedTrack, isWhiteboardPinned]);
 
-  if (hasPinnedTrack) {
-    focusTrack = pinnedTracks[pinnedTracks.length - 1];
+  React.useEffect(() => {
+    if (isWhiteboardOpen && !hasPinnedTrack && !isWhiteboardPinned) {
+      setIsWhiteboardPinned(true); // Tự động ghim lại bảng vẽ khi người dùng bỏ ghim video track khác
+    }
+  }, [isWhiteboardOpen, hasPinnedTrack, isWhiteboardPinned]);
+
+  // Thuật toán xác định đối tượng hiển thị ở khung chính (focusItem):
+  let focusItem:
+    | { type: 'whiteboard' }
+    | { type: 'track'; track: TrackReferenceOrPlaceholder }
+    | undefined = undefined;
+
+  if (isWhiteboardOpen) {
+    if (isWhiteboardPinned) {
+      focusItem = { type: 'whiteboard' };
+    } else if (hasPinnedTrack) {
+      focusItem = { type: 'track', track: pinnedTracks[pinnedTracks.length - 1] };
+    } else {
+      focusItem = { type: 'whiteboard' };
+    }
+  } else if (hasPinnedTrack) {
+    focusItem = { type: 'track', track: pinnedTracks[pinnedTracks.length - 1] };
   } else if (hasScreenShare) {
-    focusTrack = screenShareTracks[screenShareTracks.length - 1];
+    focusItem = { type: 'track', track: screenShareTracks[screenShareTracks.length - 1] };
   }
-  const hasFocus = !!focusTrack;
+
+  const hasFocus = !!focusItem;
 
   // Danh sách các ô hiển thị ở cột Sidebar bên trái:
-  // Bao gồm màn hình chia sẻ (nếu không phải là focusTrack) + các camera (không phải là focusTrack)
-  const sidebarTracks = [
-    ...screenShareTracks.filter((track) => {
-      if (!focusTrack) return true;
-      return !(
-        track.source === focusTrack.source &&
-        track.participant.identity === focusTrack.participant.identity
-      );
-    }),
-    ...cameraTracks.filter((track) => {
-      if (!focusTrack) return true;
-      return !(
-        track.source === focusTrack.source &&
-        track.participant.identity === focusTrack.participant.identity
-      );
-    })
-  ];
+  const sidebarItems: (
+    | { type: 'track'; track: TrackReferenceOrPlaceholder }
+    | { type: 'whiteboard' }
+  )[] = [];
+
+  // Nếu bảng vẽ đang mở nhưng KHÔNG được ghim ở khung chính, đưa nó vào sidebar
+  if (isWhiteboardOpen && focusItem?.type !== 'whiteboard') {
+    sidebarItems.push({ type: 'whiteboard' });
+  }
+
+  // Đưa các ScreenShare không phải là focusItem vào sidebar
+  screenShareTracks.forEach((track) => {
+    const isFocus =
+      focusItem?.type === 'track' &&
+      focusItem.track.source === track.source &&
+      focusItem.track.participant.identity === track.participant.identity;
+    if (!isFocus) {
+      sidebarItems.push({ type: 'track', track });
+    }
+  });
+
+  // Đưa các Camera không phải là focusItem vào sidebar
+  cameraTracks.forEach((track) => {
+    const isFocus =
+      focusItem?.type === 'track' &&
+      focusItem.track.source === track.source &&
+      focusItem.track.participant.identity === track.participant.identity;
+    if (!isFocus) {
+      sidebarItems.push({ type: 'track', track });
+    }
+  });
 
   return (
     <div className="relative w-full h-full bg-[#070708] flex flex-col text-zinc-100 overflow-hidden font-sans">
@@ -127,36 +178,68 @@ function VideoPanelContent() {
             </div>
             <p className="text-xs text-zinc-500 font-medium">Waiting for video feeds...</p>
           </div>
-        ) : isWhiteboardOpen ? (
+        ) : focusItem ? (
           <div className="flex w-full h-full p-4 gap-4 overflow-hidden">
-            {/* Left Sidebar: Camera feeds stack during whiteboard session */}
-            <div className="w-54 shrink-0 flex flex-col gap-3 overflow-y-auto pr-1 scrollbar-thin scrollbar-thumb-zinc-800 scrollbar-track-transparent">
-              {[...screenShareTracks, ...cameraTracks].map((track) => (
-                <div key={track.publication?.trackSid || track.participant.identity} className="w-full aspect-video shrink-0">
-                  <ParticipantGridTile trackRef={track} />
-                </div>
-              ))}
-            </div>
+            {/* Left Sidebar: Camera feeds + Whiteboard tile stack */}
+            {sidebarItems.length > 0 && (
+              <div className="w-54 shrink-0 flex flex-col gap-3 overflow-y-auto pr-1 scrollbar-thin scrollbar-thumb-zinc-800 scrollbar-track-transparent">
+                {sidebarItems.map((item, idx) => {
+                  if (item.type === 'whiteboard') {
+                    return (
+                      <div key="whiteboard-sidebar" className="w-full aspect-video shrink-0">
+                        <div className="group relative w-full h-full bg-[#0f0f12] rounded-2xl overflow-hidden border border-zinc-800/80 shadow-md flex flex-col items-center justify-center gap-1.5 select-none">
+                          <div className="w-9 h-9 rounded-full bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center text-emerald-400">
+                            <Palette className="w-4 h-4" />
+                          </div>
+                          <span className="text-[10px] font-semibold text-zinc-400">Bảng vẽ chung</span>
 
-            {/* Main Area: Collaborative Whiteboard */}
-            <div className="flex-1 h-full relative rounded-2xl overflow-hidden border border-zinc-800/80 shadow-2xl bg-[#0f0f12]">
-              <Whiteboard />
-            </div>
-          </div>
-        ) : hasFocus ? (
-          <div className="flex w-full h-full p-4 gap-4 overflow-hidden">
-            {/* Left Sidebar: Camera feeds stack */}
-            <div className="w-54 shrink-0 flex flex-col gap-3 overflow-y-auto pr-1 scrollbar-thin scrollbar-thumb-zinc-800 scrollbar-track-transparent">
-              {sidebarTracks.map((track) => (
-                <div key={track.publication?.trackSid || track.participant.identity} className="w-full aspect-video shrink-0">
-                  <ParticipantGridTile trackRef={track} />
-                </div>
-              ))}
-            </div>
+                          {/* Nút Ghim Whiteboard từ sidebar */}
+                          <div className="absolute top-2 right-2 opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all duration-200 z-40">
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setIsWhiteboardPinned(true);
+                                layoutContext.pin.dispatch?.({ msg: 'clear_pin' }); // Bỏ ghim các video track khác
+                              }}
+                              className="flex items-center justify-center w-7 h-7 rounded-full bg-zinc-950/70 text-zinc-300 hover:text-white hover:bg-zinc-900/90 border border-zinc-800/80 backdrop-blur-md cursor-pointer transition-all duration-200"
+                              title="Ghim bảng vẽ"
+                            >
+                              <Pin className="w-3 h-3" />
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  } else {
+                    return (
+                      <div key={item.track.publication?.trackSid || item.track.participant.identity} className="w-full aspect-video shrink-0">
+                        <ParticipantGridTile trackRef={item.track} />
+                      </div>
+                    );
+                  }
+                })}
+              </div>
+            )}
 
-            {/* Main Area: Active Focus (Screen Share or Pinned Camera) */}
+            {/* Main Area: Active Focus (Whiteboard, Screen Share, or Pinned Camera) */}
             <div className="flex-1 h-full relative rounded-2xl overflow-hidden border border-zinc-800/80 shadow-2xl bg-[#0f0f12]">
-              <ParticipantGridTile trackRef={focusTrack} />
+              {focusItem.type === 'whiteboard' ? (
+                <>
+                  <Whiteboard />
+                  {/* Nút Bỏ ghim Whiteboard khi đang ở chính giữa để đẩy nó về sidebar */}
+                  <div className="absolute top-4 right-4 z-40">
+                    <button
+                      onClick={() => setIsWhiteboardPinned(false)}
+                      className="flex items-center justify-center w-9 h-9 rounded-xl bg-zinc-900/90 hover:bg-zinc-800 text-emerald-400 border border-zinc-800 shadow-md backdrop-blur-md cursor-pointer transition-all duration-200 hover:scale-105 active:scale-95"
+                      title="Bỏ ghim bảng vẽ"
+                    >
+                      <Pin className="w-4 h-4" />
+                    </button>
+                  </div>
+                </>
+              ) : (
+                <ParticipantGridTile trackRef={focusItem.track} />
+              )}
             </div>
           </div>
         ) : (
