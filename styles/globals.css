@@ -202,6 +202,8 @@
   border-color: #10b981 !important;
 }
 
+
+
 /* Hide default LiveKit focus toggle button so we can render our custom Pin button */
 /* .lk-participant-tile .lk-focus-toggle-button:not(.my-custom-pin-button) {
   display: none !important;

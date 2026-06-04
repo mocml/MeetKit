@@ -1,17 +1,20 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useRouter, usePathname } from 'next/navigation';
 import {
   LogIn, X, Shield, Video, MessageSquare, Users, Hand, Smile, Grid,
   FileText, MoreHorizontal, VideoOff, Mic, MicOff,
-  Monitor, PhoneOff, ChevronDown, Send, Paperclip, SmileIcon, Bot
+  Monitor, PhoneOff, ChevronDown, Send, Paperclip, SmileIcon, Bot, BarChart2
 } from 'lucide-react';
 import Link from 'next/link';
 import { Room, Track, RoomEvent } from 'livekit-client';
 import { useRoomContext, useTrackToggle, useParticipants, useParticipantAttributes, useTracks, Chat, useChat } from '@livekit/components-react';
 import RaiseHandPopover from './RaiseHandPopover';
 import ChatSidebar from './ChatSidebar';
+import PollSidebar, { Poll, voteUpdateQueue } from './PollSidebar';
+import toast from 'react-hot-toast';
+import { NavToggleButton, MediaToggleButton, LeaveButton } from './LayoutButtons';
 
 interface MainLayoutProps {
   children: React.ReactNode;
@@ -26,6 +29,7 @@ export function MainLayout({ children }: MainLayoutProps) {
 
   const [isChatOpen, setIsChatOpen] = useState(false);
   const [isPeopleOpen, setIsPeopleOpen] = useState(false);
+  const [isPollOpen, setIsPollOpen] = useState(false);
   const [isHandListOpen, setIsHandListOpen] = useState(false);
   const [updateTrigger, setUpdateTrigger] = useState(0);
 
@@ -91,13 +95,68 @@ export function MainLayout({ children }: MainLayoutProps) {
     };
   }, [room]);
 
-  // 2. Lắng nghe tín hiệu hạ tay từ xa qua LiveKit Data Channel
+  // 2. Lắng nghe tín hiệu hạ tay và biểu quyết qua LiveKit Data Channel
   useEffect(() => {
     if (!room) return;
-    const handleDataReceived = (payload: Uint8Array, participant?: any) => {
+    const handleDataReceived = (payload: Uint8Array, participant?: any, kind?: any, topic?: string) => {
       try {
         const text = new TextDecoder().decode(payload);
         const data = JSON.parse(text);
+
+        // Xử lý gói tin bình chọn (topic: 'poll')
+        if (topic === 'poll') {
+          if (data.action === 'poll_create') {
+            toast.success('Có cuộc bình chọn mới vừa bắt đầu!', {
+              icon: '📊',
+              style: {
+                background: '#18181b',
+                color: '#f4f4f5',
+                border: '1px solid #27272a'
+              }
+            });
+            setIsPollOpen(true); // Tự động mở Sidebar để người dùng tiện bình chọn
+          } else if (data.action === 'poll_end') {
+            toast('Cuộc bình chọn đã kết thúc và có kết quả!', {
+              icon: '🏁',
+              style: {
+                background: '#18181b',
+                color: '#f4f4f5',
+                border: '1px solid #27272a'
+              }
+            });
+          } else if (data.action === 'poll_vote') {
+            // Chỉ người tạo Poll mới kiểm phiếu bầu và lưu kết quả lên server LiveKit (sử dụng hàng đợi tuần tự để tránh race condition)
+            voteUpdateQueue.current = voteUpdateQueue.current.then(async () => {
+              const activePollAttr = room.localParticipant.attributes.activePoll;
+              if (!activePollAttr) return;
+              try {
+                const currentPoll = JSON.parse(activePollAttr) as Poll;
+                if (currentPoll && currentPoll.id === data.pollId && currentPoll.isActive) {
+                  // Xóa phiếu bầu cũ của voter (nếu họ đổi phương án)
+                  currentPoll.options.forEach((opt) => {
+                    opt.votes = opt.votes.filter((identity) => identity !== data.voterIdentity);
+                  });
+                  // Ghi nhận phiếu bầu mới vào phương án được chọn
+                  const selectedOpt = currentPoll.options.find((opt) => opt.id === data.optionId);
+                  if (selectedOpt) {
+                    selectedOpt.votes.push(data.voterIdentity);
+                  }
+                  // Cập nhật thuộc tính activePoll mới lên server LiveKit và đợi phản hồi từ máy chủ
+                  await room.localParticipant.setAttributes({
+                    activePoll: JSON.stringify(currentPoll)
+                  });
+                }
+              } catch (e) {
+                console.error('Failed to update poll votes in queue:', e);
+              }
+            }).catch((err) => {
+              console.error('Error in voteUpdateQueue execution:', err);
+            });
+          }
+          return;
+        }
+
+        // Xử lý hạ tay
         if (data.action === 'lower_hand') {
           if (data.targetIdentity === room.localParticipant.identity) {
             room.localParticipant.setAttributes({ isHandRaised: 'false' }).catch(console.error);
@@ -167,8 +226,6 @@ export function MainLayout({ children }: MainLayoutProps) {
     } catch (err) {
       console.error("Failed to lower own hand:", err);
     }
-
-    // Gửi tín hiệu hạ tay cho toàn bộ người họp qua Data Channel
     try {
       const payload = JSON.stringify({ action: 'lower_hand_all' });
       const data = new TextEncoder().encode(payload);
@@ -180,7 +237,7 @@ export function MainLayout({ children }: MainLayoutProps) {
     }
   };
 
-  // Live Meeting Timer State
+  // Live Meeting TimerState
   const [elapsedSeconds, setElapsedSeconds] = useState(269); // Start at 04:29 like in the image
   useEffect(() => {
     const timer = setInterval(() => {
@@ -195,20 +252,9 @@ export function MainLayout({ children }: MainLayoutProps) {
     return `${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`;
   };
 
-  const {
-    enabled: cameraEnabled,
-    toggle: toggleCamera,
-    pending: pendingCamera
-  } = useTrackToggle({ source: Track.Source.Camera });
-  const {
-    enabled: micEnabled,
-    toggle: toggleMic,
-    pending: pendingMic
-  } = useTrackToggle({ source: Track.Source.Microphone });
-  const { enabled: screenShareEnabled,
-    toggle: toggleScreenShare,
-    pending: pendingScreenShare
-  } = useTrackToggle({ source: Track.Source.ScreenShare });
+  const { enabled: cameraEnabled, toggle: toggleCamera, pending: pendingCamera } = useTrackToggle({ source: Track.Source.Camera });
+  const { enabled: micEnabled, toggle: toggleMic, pending: pendingMic } = useTrackToggle({ source: Track.Source.Microphone });
+  const { enabled: screenShareEnabled, toggle: toggleScreenShare, pending: pendingScreenShare } = useTrackToggle({ source: Track.Source.ScreenShare });
 
   const screenShareTracks = useTracks(
     [{ source: Track.Source.ScreenShare, withPlaceholder: false }],
@@ -268,59 +314,49 @@ export function MainLayout({ children }: MainLayoutProps) {
         </div>
         <div className="flex items-center gap-4 h-full">
           <nav className="flex items-center gap-1.5 h-full py-1">
-            <button
+            <NavToggleButton
               onClick={() => setIsChatOpen(!isChatOpen)}
-              className={`relative flex flex-col items-center justify-center w-12 h-11 rounded-lg transition-all cursor-pointer ${isChatOpen
-                ? 'bg-zinc-800/80 text-emerald-400 border-b-2 border-emerald-500 rounded-b-none'
-                : 'text-zinc-400 hover:bg-zinc-800/50 hover:text-zinc-200'
-                }`}
-            >
-              <MessageSquare className="w-4.5 h-4.5" />
-              <span className="text-[9px] mt-0.5 font-semibold">Chat</span>
-              {unreadCount > 0 && (
-                <div className="absolute top-1 right-2.5 w-2 h-2 bg-emerald-500 rounded-full shadow-[0_0_8px_rgba(16,185,129,0.8)] animate-pulse" />
-              )}
-            </button>
+              isActive={isChatOpen}
+              icon={<MessageSquare className="w-4.5 h-4.5" />}
+              label="Chat"
+              badge={unreadCount > 0 ? (
+                <div className="absolute top-0 -right-1 w-2 h-2 bg-emerald-500 rounded-full shadow-[0_0_8px_rgba(16,185,129,0.8)] animate-pulse" />
+              ) : undefined}
+            />
 
-            {/* Whiteboard Toggle Button */}
-            <button
+            <NavToggleButton
               onClick={toggleWhiteboard}
-              className={`flex flex-col items-center justify-center w-12 h-11 rounded-lg transition-all cursor-pointer ${
-                isWhiteboardOpen
-                  ? 'bg-zinc-800/80 text-emerald-400 border-b-2 border-emerald-500 rounded-b-none'
-                  : 'text-zinc-400 hover:bg-zinc-800/50 hover:text-zinc-200'
-              }`}
-            >
-              <FileText className="w-4.5 h-4.5" />
-              <span className="text-[9px] mt-0.5 font-semibold">Board</span>
-            </button>
+              isActive={isWhiteboardOpen}
+              icon={<FileText className="w-4.5 h-4.5" />}
+              label="Board"
+            />
 
-            {/* People Toggle Button */}
-            <button
+            <NavToggleButton
+              onClick={() => setIsPollOpen(!isPollOpen)}
+              isActive={isPollOpen}
+              icon={<BarChart2 className="w-4.5 h-4.5" />}
+              label="Poll"
+            />
+
+            <NavToggleButton
               onClick={() => setIsPeopleOpen(!isPeopleOpen)}
-              className={`flex flex-col items-center justify-center w-12 h-11 rounded-lg transition-all cursor-pointer ${isPeopleOpen
-                ? 'bg-zinc-800/80 text-emerald-400 border-b-2 border-emerald-500 rounded-b-none'
-                : 'text-zinc-400 hover:bg-zinc-800/50 hover:text-zinc-200'
-                }`}
-            >
-              <div className="relative">
-                <Users className="w-4.5 h-4.5" />
-                <span className="absolute -top-1 -right-2 bg-zinc-700 text-[8px] font-bold text-zinc-100 rounded-full w-3.5 h-3.5 flex items-center justify-center border border-[#1c1c1e]">{participantCount}</span>
-              </div>
-              <span className="text-[9px] mt-0.5 font-semibold">People</span>
-            </button>
+              isActive={isPeopleOpen}
+              icon={<Users className="w-4.5 h-4.5" />}
+              label="People"
+              badge={
+                <span className="absolute -top-1.5 -right-2 bg-zinc-700 text-[8px] font-bold text-zinc-100 rounded-full w-3.5 h-3.5 flex items-center justify-center border border-[#1c1c1e]">
+                  {participantCount}
+                </span>
+              }
+            />
 
-            {/* Raise Hand Button */}
-            <button
+            <NavToggleButton
               onClick={toggleHandRaised}
-              className={`flex flex-col items-center justify-center w-12 h-11 rounded-lg transition-all cursor-pointer ${isHandRaised
-                ? 'bg-amber-500/10 text-amber-400 border-b-2 border-amber-500 rounded-b-none'
-                : 'text-zinc-400 hover:bg-zinc-800/50 hover:text-zinc-200'
-                }`}
-            >
-              <Hand className="w-4.5 h-4.5" />
-              <span className="text-[9px] mt-0.5 font-semibold">Raise</span>
-            </button>
+              isActive={isHandRaised}
+              icon={<Hand className="w-4.5 h-4.5" />}
+              label="Raise"
+              activeColor="amber"
+            />
 
             {/* More Dropdown */}
             <button className="flex flex-col items-center justify-center w-12 h-11 rounded-lg text-zinc-400 hover:bg-zinc-800/50 hover:text-zinc-200 transition-all cursor-pointer">
@@ -333,50 +369,39 @@ export function MainLayout({ children }: MainLayoutProps) {
 
           {/* Media Toggles */}
           <div className="flex items-center bg-[#252528] rounded-lg p-0.5 gap-1 border border-zinc-800/60">
-            {/* Camera */}
-            <button
+            <MediaToggleButton
               onClick={() => toggleCamera()}
               disabled={pendingCamera}
-              className={`p-2 rounded-md transition-all cursor-pointer ${cameraEnabled ? 'text-zinc-200 hover:bg-zinc-700/60' : 'bg-rose-600/20 text-rose-400 hover:bg-rose-600/30'
-                }`}
-            >
-              {cameraEnabled ? <Video className="w-4.5 h-4.5" /> : <VideoOff className="w-4.5 h-4.5" />}
-            </button>
-            {/* Microphone */}
-            <button
+              isEnabled={cameraEnabled}
+              enabledIcon={<Video className="w-4.5 h-4.5" />}
+              disabledIcon={<VideoOff className="w-4.5 h-4.5" />}
+              activeColor="normal"
+              inactiveColor="rose"
+            />
+
+            <MediaToggleButton
               onClick={() => toggleMic()}
               disabled={pendingMic}
-              className={`p-2 rounded-md transition-all cursor-pointer ${micEnabled ? 'text-zinc-200 hover:bg-zinc-700/60' : 'bg-rose-600/20 text-rose-400 hover:bg-rose-600/30'
-                }`}
-            >
-              {micEnabled ? <Mic className="w-4.5 h-4.5" /> : <MicOff className="w-4.5 h-4.5" />}
-            </button>
-            {/* Screen Share */}
-            <button
+              isEnabled={micEnabled}
+              enabledIcon={<Mic className="w-4.5 h-4.5" />}
+              disabledIcon={<MicOff className="w-4.5 h-4.5" />}
+              activeColor="normal"
+              inactiveColor="rose"
+            />
+
+            <MediaToggleButton
               onClick={handleScreenShareClick}
               disabled={pendingScreenShare}
-              className={`p-2 rounded-md transition-all cursor-pointer ${screenShareEnabled ? 'bg-emerald-600/20 text-emerald-400 hover:bg-emerald-600/30' : 'text-zinc-200 hover:bg-zinc-700/60'
-                }`}
-            >
-              <Monitor className="w-4.5 h-4.5" />
-            </button>
+              isEnabled={screenShareEnabled}
+              enabledIcon={<Monitor className="w-4.5 h-4.5" />}
+              activeColor="emerald"
+              inactiveColor="normal"
+            />
           </div>
 
           <div className="w-px h-5 bg-[#2a2a2c] mx-1" />
 
-          {/* Red Leave Button Group */}
-          <div className="flex items-stretch rounded-lg overflow-hidden border border-rose-500/20 shadow-md">
-            <button
-              onClick={() => router.push('/')}
-              className="bg-[#c43131] hover:bg-[#b02929] text-white px-3.5 py-1.5 text-xs font-bold flex items-center gap-1.5 transition-colors cursor-pointer"
-            >
-              <PhoneOff className="w-3.5 h-3.5" />
-              <span>Leave</span>
-            </button>
-            <button className="bg-[#b32b2b] hover:bg-[#a12424] text-white px-1.5 py-1.5 transition-colors border-l border-white/10 flex items-center justify-center cursor-pointer">
-              <ChevronDown className="w-3.5 h-3.5" />
-            </button>
-          </div>
+          <LeaveButton onLeave={() => router.push('/')} />
           <div className="w-px h-5 bg-[#2a2a2c] mx-1" />
         </div>
       </header>
@@ -391,6 +416,10 @@ export function MainLayout({ children }: MainLayoutProps) {
         <ChatSidebar
           isOpen={isChatOpen}
           onClose={() => setIsChatOpen(false)}
+        />
+        <PollSidebar
+          isOpen={isPollOpen}
+          onClose={() => setIsPollOpen(false)}
         />
       </div>
     </div>

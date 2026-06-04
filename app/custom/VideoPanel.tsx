@@ -135,16 +135,11 @@ function VideoPanelContent() {
 
   const hasFocus = !!focusItem;
 
-  // Danh sách các ô hiển thị ở cột Sidebar bên trái:
-  const sidebarItems: (
-    | { type: 'track'; track: TrackReferenceOrPlaceholder }
-    | { type: 'whiteboard' }
-  )[] = [];
+  // Kiểm tra nếu bảng vẽ đang mở nhưng KHÔNG được ghim ở khung chính -> đưa nó vào sidebar
+  const isWhiteboardInSidebar = isWhiteboardOpen && focusItem?.type !== 'whiteboard';
 
-  // Nếu bảng vẽ đang mở nhưng KHÔNG được ghim ở khung chính, đưa nó vào sidebar
-  if (isWhiteboardOpen && focusItem?.type !== 'whiteboard') {
-    sidebarItems.push({ type: 'whiteboard' });
-  }
+  // Lấy các track camera/screenshare hiển thị ở sidebar bên trái
+  const sidebarTracks: TrackReferenceOrPlaceholder[] = [];
 
   // Đưa các ScreenShare không phải là focusItem vào sidebar
   screenShareTracks.forEach((track) => {
@@ -153,7 +148,7 @@ function VideoPanelContent() {
       focusItem.track.source === track.source &&
       focusItem.track.participant.identity === track.participant.identity;
     if (!isFocus) {
-      sidebarItems.push({ type: 'track', track });
+      sidebarTracks.push(track);
     }
   });
 
@@ -164,7 +159,7 @@ function VideoPanelContent() {
       focusItem.track.source === track.source &&
       focusItem.track.participant.identity === track.participant.identity;
     if (!isFocus) {
-      sidebarItems.push({ type: 'track', track });
+      sidebarTracks.push(track);
     }
   });
 
@@ -181,43 +176,42 @@ function VideoPanelContent() {
         ) : focusItem ? (
           <div className="flex w-full h-full p-4 gap-4 overflow-hidden">
             {/* Left Sidebar: Camera feeds + Whiteboard tile stack */}
-            {sidebarItems.length > 0 && (
-              <div className="w-54 shrink-0 flex flex-col gap-3 overflow-y-auto pr-1 scrollbar-thin scrollbar-thumb-zinc-800 scrollbar-track-transparent">
-                {sidebarItems.map((item, idx) => {
-                  if (item.type === 'whiteboard') {
-                    return (
-                      <div key="whiteboard-sidebar" className="w-full aspect-video shrink-0">
-                        <div className="group relative w-full h-full bg-[#0f0f12] rounded-2xl overflow-hidden border border-zinc-800/80 shadow-md flex flex-col items-center justify-center gap-1.5 select-none">
-                          <div className="w-9 h-9 rounded-full bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center text-emerald-400">
-                            <Palette className="w-4 h-4" />
-                          </div>
-                          <span className="text-[10px] font-semibold text-zinc-400">Bảng vẽ chung</span>
+            {(isWhiteboardInSidebar || sidebarTracks.length > 0) && (
+              <div className="layout-sidebar w-54 shrink-0 flex flex-col gap-3 overflow-y-auto pr-1 scrollbar-thin scrollbar-thumb-zinc-800 scrollbar-track-transparent">
+                {isWhiteboardInSidebar && (
+                  <div key="whiteboard-sidebar" className="w-full aspect-video shrink-0">
+                    <div className="group relative w-full h-full bg-[#0f0f12] rounded-2xl overflow-hidden border border-zinc-800/80 shadow-md flex flex-col items-center justify-center gap-1.5 select-none">
+                      <div className="w-9 h-9 rounded-full bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center text-emerald-400">
+                        <Palette className="w-4 h-4" />
+                      </div>
+                      <span className="text-[10px] font-semibold text-zinc-400">Bảng vẽ chung</span>
 
-                          {/* Nút Ghim Whiteboard từ sidebar */}
-                          <div className="absolute top-2 right-2 opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all duration-200 z-40">
-                            <button
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                setIsWhiteboardPinned(true);
-                                layoutContext.pin.dispatch?.({ msg: 'clear_pin' }); // Bỏ ghim các video track khác
-                              }}
-                              className="flex items-center justify-center w-7 h-7 rounded-full bg-zinc-950/70 text-zinc-300 hover:text-white hover:bg-zinc-900/90 border border-zinc-800/80 backdrop-blur-md cursor-pointer transition-all duration-200"
-                              title="Ghim bảng vẽ"
-                            >
-                              <Pin className="w-3 h-3" />
-                            </button>
-                          </div>
-                        </div>
+                      {/* Nút Ghim Whiteboard từ sidebar */}
+                      <div className="absolute top-2 right-2 opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all duration-200 z-40">
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setIsWhiteboardPinned(true);
+                            layoutContext.pin.dispatch?.({ msg: 'clear_pin' }); // Bỏ ghim các video track khác
+                          }}
+                          className="flex items-center justify-center w-7 h-7 rounded-full bg-zinc-950/70 text-zinc-300 hover:text-white hover:bg-zinc-900/90 border border-zinc-800/80 backdrop-blur-md cursor-pointer transition-all duration-200"
+                          title="Ghim bảng vẽ"
+                        >
+                          <Pin className="w-3 h-3" />
+                        </button>
                       </div>
-                    );
-                  } else {
-                    return (
-                      <div key={item.track.publication?.trackSid || item.track.participant.identity} className="w-full aspect-video shrink-0">
-                        <ParticipantGridTile trackRef={item.track} />
-                      </div>
-                    );
-                  }
-                })}
+                    </div>
+                  </div>
+                )}
+
+                {sidebarTracks.map((track) => (
+                  <div
+                    key={track.publication?.trackSid || track.participant.identity}
+                    className="w-full aspect-video shrink-0"
+                  >
+                    <ParticipantGridTile trackRef={track} />
+                  </div>
+                ))}
               </div>
             )}
 
