@@ -1,15 +1,15 @@
 'use client';
 
-import React, { useState, useEffect, useRef } from 'react';
-import { useRouter, usePathname } from 'next/navigation';
+import React, { useState, useEffect } from 'react';
+import { useRouter } from 'next/navigation';
 import {
-  LogIn, X, Shield, Video, MessageSquare, Users, Hand, Smile, Grid,
+  Shield, Video, MessageSquare, Users, Hand,
   FileText, MoreHorizontal, VideoOff, Mic, MicOff,
-  Monitor, PhoneOff, ChevronDown, Send, Paperclip, SmileIcon, Bot, BarChart2
+  Monitor, BarChart2
 } from 'lucide-react';
 import Link from 'next/link';
 import { Room, Track, RoomEvent } from 'livekit-client';
-import { useRoomContext, useTrackToggle, useParticipants, useParticipantAttributes, useTracks, Chat, useChat } from '@livekit/components-react';
+import { useRoomContext, useTrackToggle, useParticipants, useParticipantAttributes, useTracks, Chat, useChat, useTranscriptions } from '@livekit/components-react';
 import RaiseHandPopover from './RaiseHandPopover';
 import ChatSidebar from './ChatSidebar';
 import PollSidebar, { Poll, voteUpdateQueue } from './PollSidebar';
@@ -286,7 +286,6 @@ export function MainLayout({ children }: MainLayoutProps) {
       console.error("Failed to update raise hand attributes:", error);
     }
   };
-
   return (
     <div className="h-full w-full bg-[#111112] text-[#f5f5f5] flex flex-col font-sans overflow-hidden select-none">
       <header className="h-14 shrink-0 w-full bg-[#1c1c1e] border-b border-[#2a2a2c] px-4 flex items-center justify-between z-50">

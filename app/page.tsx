@@ -34,36 +34,13 @@ export default function Page() {
           </p>
         </div>
 
-        <form onSubmit={startMeeting} className="space-y-4">
-          <div className="space-y-2">
-            <label htmlFor="username" className="text-xs font-semibold text-zinc-400 uppercase tracking-wider">
-              Tên của bạn
-            </label>
-            <div className="relative">
-              <span className="absolute inset-y-0 left-0 flex items-center pl-3 text-zinc-500">
-                <User className="w-4 h-4" />
-              </span>
-              <input
-                id="username"
-                type="text"
-                required
-                autoComplete={"off"}
-                placeholder="Nhập tên hiển thị..."
-                value={username}
-                onChange={(e) => setUsername(e.target.value)}
-                className="w-full bg-[#202022] border border-[#2d2d30] rounded-xl pl-10 pr-4 py-3 text-sm text-zinc-200 placeholder-zinc-500 focus:outline-none focus:border-emerald-500/50 focus:ring-1 focus:ring-emerald-500/50 transition-all duration-200"
-              />
-            </div>
-          </div>
-
-          <Button
-            type="submit"
-            disabled={!username.trim()}
-            className="w-full text-white py-6 rounded-xl border-none bg-emerald-500 hover:bg-emerald-600 font-bold transition-all duration-200 cursor-pointer shadow-lg shadow-emerald-500/10"
-          >
-            Bắt đầu cuộc họp
-          </Button>
-        </form>
+        <Button
+          type="submit"
+          onClick={startMeeting}
+          className="w-full text-white py-6 rounded-xl border-none bg-emerald-500 hover:bg-emerald-600 font-bold transition-all duration-200 cursor-pointer shadow-lg shadow-emerald-500/10"
+        >
+          Bắt đầu cuộc họp
+        </Button>
       </div>
     </div>
   );

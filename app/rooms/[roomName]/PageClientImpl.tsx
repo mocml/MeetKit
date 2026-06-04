@@ -1,6 +1,7 @@
 'use client';
 
 import React from 'react';
+import toast from 'react-hot-toast';
 import { decodePassphrase } from '@/lib/client-utils';
 import { DebugMode } from '@/lib/Debug';
 import { KeyboardShortcuts } from '@/lib/KeyboardShortcuts';
@@ -207,16 +208,27 @@ function VideoConferenceComponent(props: {
   const lowPowerMode = useLowCPUOptimizer(room);
 
   const router = useRouter();
+
   const handleOnLeave = React.useCallback(() => router.push('/'), [router]);
   const handleError = React.useCallback((error: Error) => {
     console.error(error);
-    alert(`Encountered an unexpected error, check the console logs for details: ${error.message}`);
+    toast.error(`Gặp lỗi kết nối thiết bị: ${error.message === 'Requested device not found' ? 'Không tìm thấy thiết bị camera/micro yêu cầu.' : error.message}`, {
+      style: {
+        background: '#18181b',
+        color: '#f4f4f5',
+        border: '1px solid #27272a'
+      }
+    });
   }, []);
   const handleEncryptionError = React.useCallback((error: Error) => {
     console.error(error);
-    alert(
-      `Encountered an unexpected encryption error, check the console logs for details: ${error.message}`,
-    );
+    toast.error(`Gặp lỗi mã hóa: ${error.message}`, {
+      style: {
+        background: '#18181b',
+        color: '#f4f4f5',
+        border: '1px solid #27272a'
+      }
+    });
   }, []);
 
   React.useEffect(() => {

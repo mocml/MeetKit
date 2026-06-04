@@ -4,6 +4,7 @@
   "private": true,
   "scripts": {
     "dev": "next dev",
+    "agent:dev": "pnpm --dir ../vagent dev",
     "build": "next build",
     "start": "next start",
     "lint": "next lint",
